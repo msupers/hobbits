@@ -1,0 +1,54 @@
+pipeline{
+        agent { docker 'registry.cmri.cn/zhcsep/dind-nodejs:v6.2.2' }
+        stages {
+        stage('Scm') {
+
+        steps{
+        withCredentials([usernamePassword(credentialsId: 'git-token', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+
+        sh "rm -rf leshan-smart-park-fe;git clone http://zhangmiaoyjy:$PASSWORD@dev.cmri.cn/gitlab/zhcspi/leshan-smart-park-fe.git"
+        }
+        }
+        }
+        stage('Compile'){
+        steps{
+        withCredentials([usernamePassword(credentialsId: 'git-token', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+        dir('leshan-smart-park-fe'){
+        sh "curl  --request GET --header \"PRIVATE-TOKEN: $PASSWORD\" http://dev.cmri.cn/gitlab/zhcsop/deploy/raw/master/zhcspi/leshan-smart-park-fe/master/Dockerfile -o Dockerfile"
+        //	sh "curl  --request GET --header \"PRIVATE-TOKEN: $PASSWORD\" http://dev.cmri.cn/gitlab/zhcsop/deploy/raw/master/zhcspi/leshan-smart-park-fe/master/build.sh -o build.sh"
+        sh "curl  --request GET --header \"PRIVATE-TOKEN: $PASSWORD\" http://dev.cmri.cn/gitlab/zhcsop/deploy/raw/master/zhcspi/leshan-smart-park-fe/master/service.sh -o service.sh"
+        //	sh "curl  --request GET --header \"PRIVATE-TOKEN: $PASSWORD\" http://dev.cmri.cn/gitlab/zhcsop/deploy/raw/master/zhcspi/leshan-smart-park-fe/master/leshan-smart-park-fe.conf -o leshan-smart-park-fe.conf"
+        sh "curl  --request GET --header \"PRIVATE-TOKEN: $PASSWORD\" http://dev.cmri.cn/gitlab/zhcsop/deploy/raw/master/zhcspi/leshan-smart-park-fe/master/supervisord-nginx.conf -o supervisord-nginx.conf"
+        sh 'chmod 777 service.sh'
+        sh "docker login -u zhangmiaoyjy -p Mm19880424 registry.cmri.cn"
+        sh './service.sh build zhcspi leshan-smart-park-fe master'
+        }
+        }
+        }
+        }
+        stage('Deploy'){
+        steps{
+        withCredentials([usernamePassword(credentialsId: 'git-token', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+        dir('leshan-smart-park-fe'){
+        //			sh "curl  --request GET --header \"PRIVATE-TOKEN: $PASSWORD\" http://dev.cmri.cn/gitlab/zhcsop/deploy/raw/master/zhcspi/leshan-smart-park-fe/master/deploy.sh -o deploy.sh"
+        sh "curl  --request GET --header \"PRIVATE-TOKEN: $PASSWORD\" http://dev.cmri.cn/gitlab/zhcsop/deploy/raw/master/zhcspi/leshan-smart-park-fe/master/ansible-tag/hosts -o hosts"
+        sh "curl  --request GET --header \"PRIVATE-TOKEN: $PASSWORD\" http://dev.cmri.cn/gitlab/zhcsop/deploy/raw/master/zhcspi/leshan-smart-park-fe/master/docker-compose.yml -o docker-compose.yml"
+        sh 'chmod 777 service.sh'
+        sh './service.sh deploy zhcspi leshan-smart-park-fe master'
+        }
+        }
+        }
+        }
+        stage('Report'){
+        steps{
+        withCredentials([usernamePassword(credentialsId: 'git-token', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+        dir('leshan-smart-park-fe'){
+        //				sh "curl  --request GET --header \"PRIVATE-TOKEN: $PASSWORD\" http://dev.cmri.cn/gitlab/zhcsop/deploy/raw/master/zhcspi/leshan-smart-park-fe/master/report.sh -o report.sh"
+        //			    sh 'chmod 777 report.sh'
+        sh './service.sh report zhcspi leshan-smart-park-fe master'
+        }
+        }
+        }
+        }
+        }
+        }

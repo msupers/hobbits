@@ -4,11 +4,14 @@ import "net/http"
 
 func main() {
 	mux := http.NewServeMux()
-	//mux.HandleFunc("/",index)
-	//mux.HandleFunc("/",index)
-	//mux.HandleFunc("/job/create",createJenkinsJob)
-	mux.HandleFunc("/job/run", RunJenkinsJob)
-	mux.HandleFunc("/job/list", ListJenkinsJob)
+
+	//some job handle func
+	mux.HandleFunc("/jenkins/job", JenkinsJob)
+	//mux.HandleFunc("/job/list", ListJenkinsJob)
+	//mux.HandleFunc("/job/config",GetJobConfig)
+
+	//some view handle func
+	//	mux.HandleFunc("/view/list",ListJenkinsView)
 	server := &http.Server{
 		Addr:    "0.0.0.0:8000",
 		Handler: mux,
