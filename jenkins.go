@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/bndr/gojenkins"
+	"html/template"
 	"net/http"
+	"os"
 )
 
 type Jenkins struct{}
@@ -12,7 +15,7 @@ type Jenkins struct{}
 var Jks Jenkins
 
 func (jenkins *Jenkins) JenkinsInit() *gojenkins.Jenkins {
-	j, _ := gojenkins.CreateJenkins(nil, "http://10.2.40.43:8080/", "admin", "123.com").Init()
+	j, _ := gojenkins.CreateJenkins(nil, "http://10.2.40.44:8080/", "admin", "123.com").Init()
 	return j
 	//fmt.Printf("%T", jks)
 }
@@ -23,8 +26,8 @@ type JobInfo struct {
 	BuiltCount int64  `json:"builtcount"`
 }
 
-var jInfo JobInfo
-var jList []JobInfo
+var jobInfo JobInfo
+var jobList []JobInfo
 
 func JenkinsJob(w http.ResponseWriter, r *http.Request) {
 	var err error
@@ -32,9 +35,9 @@ func JenkinsJob(w http.ResponseWriter, r *http.Request) {
 	case "GET":
 		err = GetJenkinsJob(w, r)
 	case "POST":
-		err = CreateJenkinsJob(w, r)
+		err = PostJenkinsJob(w, r)
 	case "PUT":
-		err = RunJenkinsJob(w, r)
+		err = PutJenkinsJob(w, r)
 	case "DELETE":
 		err = DeleteJenkinsJob(w, r)
 	}
@@ -47,85 +50,118 @@ func JenkinsJob(w http.ResponseWriter, r *http.Request) {
 //GET /jenkins/job
 func GetJenkinsJob(w http.ResponseWriter, r *http.Request) (err error) {
 	j := Jks.JenkinsInit()
-	jobname := r.FormValue("jobname")
-	if jobname == "" {
+	jobName := r.FormValue("name")
+	if jobName == "" {
 		allJob, _ := j.GetAllJobs()
 		for i := range allJob {
-			jInfo.JobName = allJob[i].Raw.Name
-			jInfo.Color = allJob[i].Raw.Color
-			jInfo.BuiltCount = allJob[i].Raw.LastBuild.Number
-			jList = append(jList, jInfo)
+			jobInfo.JobName = allJob[i].Raw.Name
+			jobInfo.Color = allJob[i].Raw.Color
+			jobInfo.BuiltCount = allJob[i].Raw.LastBuild.Number
+			jobList = append(jobList, jobInfo)
 		}
-		json, _ := json.Marshal(jList)
-		fmt.Fprintln(w, string(json))
-		return nil
-		//fmt.Fprintln(w,)
+		jobListJson, err := json.Marshal(jobList)
+		if err != nil {
+			return err
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(jobListJson)
+
 	} else {
-		oneJob, _ := j.GetJob(jobname)
-		jInfo.JobName = oneJob.Raw.Name
-		jInfo.Color = oneJob.Raw.Color
-		jInfo.BuiltCount = oneJob.Raw.LastBuild.Number
-		json, err := json.Marshal(jInfo)
-		fmt.Fprintln(w, string(json))
+		oneJob, _ := j.GetJob(jobName)
+		jobInfo.JobName = oneJob.Raw.Name
+		jobInfo.Color = oneJob.Raw.Color
+		jobInfo.BuiltCount = oneJob.Raw.LastBuild.Number
+		oneJobJson, err := json.Marshal(jobInfo)
+		if err != nil {
+			return err
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(oneJobJson)
+	}
+
+	return
+}
+
+func PostJenkinsJob(w http.ResponseWriter, r *http.Request) (err error) {
+	type TplJob struct {
+		GitProject string
+		GitGroup   string
+	}
+	j := Jks.JenkinsInit()
+	var tpl TplJob
+	gitProject := r.FormValue("project")
+	gitGroup := r.FormValue("group")
+	tpl.GitProject = gitProject
+	tpl.GitGroup = gitGroup
+	jobName := gitGroup + "-" + gitProject + "-master"
+
+	//生成jenkins job config 前半部分
+	pipelineHead, err := os.Open("templates/jenkins_tpl_head.xml")
+	if err != nil {
+		fmt.Println(err)
+	}
+	buf := make([]byte, 20000)
+	n, _ := pipelineHead.Read(buf)
+	strHead := string(buf[:n])
+	defer pipelineHead.Close()
+
+	//生成jenkins Job config 后半部分
+	pipelineTail, err := os.Open("templates/jenkins_tpl_pipeline.groovy")
+	if err != nil {
+		fmt.Println(err)
+	}
+	buf2 := make([]byte, 20000)
+	tail, _ := pipelineTail.Read(buf2)
+	strTail := string(buf2[:tail])
+	defer pipelineTail.Close()
+	//fmt.Printf("%T", str)
+	textTpl, err := template.New("test").Parse(strHead + "\n" + strTail)
+	if err != nil {
 		return err
 	}
-
+	var b1 bytes.Buffer
+	_ = textTpl.Execute(&b1, tpl)
+	result, err := j.CreateJob(b1.String(), jobName)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(w, result)
 	return nil
 }
 
-func CreateJenkinsJob(w http.ResponseWriter, r *http.Request) (err error) {
-	fmt.Fprintln(w, "create jenkins job ", http.StatusOK)
-	return nil
-}
+func PutJenkinsJob(w http.ResponseWriter, r *http.Request) (err error) {
+	j := Jks.JenkinsInit()
+	jobName := r.FormValue("name")
+	if jobName == "" {
+		_, _ = fmt.Fprintln(w, "jobname can not null")
+		return
+	}
+	startNo, err := j.BuildJob(jobName)
+	if err != nil {
+		return err
+	}
+	jobStartResult := struct {
+		JobName string `json:"job-name"`
+		IsStart bool   `json:"is-start"`
+		StartNo int64  `json:"start-no"`
+	}{JobName: jobName, IsStart: true, StartNo: startNo}
 
-func RunJenkinsJob(w http.ResponseWriter, r *http.Request) (err error) {
-	fmt.Fprintln(w, "run jenkins job ", http.StatusOK)
-	return nil
+	jobStartJson, err := json.Marshal(jobStartResult)
+	_, _ = w.Write(jobStartJson)
+	//_, _ = fmt.Fprintf(w, jobName+" is starting running, start No is %d", startNo)
+
+	//w.Write()
+	return err
 }
 func DeleteJenkinsJob(w http.ResponseWriter, r *http.Request) (err error) {
-	fmt.Fprintln(w, "delete jenkins job ", http.StatusOK)
-	return nil
-}
-
-/*
-// PUT /job/run?jobname=$JobName
-// run a jenkins job by job name
-func RunJenkinsJob(w http.ResponseWriter, r *http.Request) {
+	//fmt.Fprintln(w, "delete jenkins job ", http.StatusOK)
 	j := Jks.JenkinsInit()
 	jobname := r.FormValue("jobname")
-	result, err := j.BuildJob(jobname)
-	if err != nil {
-		fmt.Println(err.Error())
-		return
-	}
-	fmt.Fprintln(w, result)
-}
-
-//GET /job/list
-// get all job list
-type JobList struct {
-	JobName    string `json:"jobname"`
-	Color      string `json:"color"`
-	BuiltCount int64  `json:"builtcount"`
-}
-
-func ListJenkinsJob(w http.ResponseWriter, r *http.Request) {
-	var jobInfo []JobList
-	var jL JobList
-	j := Jks.JenkinsInit()
-	jobList, _ := j.GetAllJobs()
-	for i := range jobList {
-		jL.Color = jobList[i].Raw.Color
-		jL.JobName = jobList[i].Raw.Name
-		jL.BuiltCount = jobList[i].Raw.LastBuild.Number
-		jobInfo = append(jobInfo, jL)
-	}
-	json, err := json.Marshal(jobInfo)
-	if err != nil {
-		fmt.Println(err.Error())
-		return
-	}
-	fmt.Fprintln(w, string(json))
+	delResult, err := j.DeleteJob(jobname)
+	_, _ = fmt.Fprintln(w, delResult)
+	return err
 }
 
 //GET /job/config?jobname=$JobName
@@ -135,24 +171,5 @@ func GetJobConfig(w http.ResponseWriter, r *http.Request) {
 	jobname := r.FormValue("jobname")
 	job, _ := j.GetJob(jobname)
 	config, _ := job.GetConfig()
-	fmt.Fprintln(w, config)
+	_, _ = fmt.Fprintln(w, config)
 }
-
-type ViewList struct {
-	ViewName string `json:"view-name"`
-}
-
-func ListJenkinsView(w http.ResponseWriter, r *http.Request) {
-	var vList ViewList
-	var vListRespon []ViewList
-	j := Jks.JenkinsInit()
-	viewList, _ := j.GetAllViews()
-	for i := range viewList {
-		vList.ViewName = viewList[i].Raw.Name
-		vListRespon = append(vListRespon, vList)
-	}
-	json, _ := json.Marshal(vListRespon)
-
-	fmt.Fprintln(w, string(json))
-}
-*/
